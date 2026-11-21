@@ -33,6 +33,8 @@ pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="frame-web")
 lock = threading.RLock()
 jobs = {}
 access = collections.defaultdict(collections.deque)
+blocked_videos = {}  # YouTube verification failures; in-memory temporary cooldown.
+BLOCK_WINDOW = 30 * 60
 
 
 def now():
@@ -52,6 +54,9 @@ def cleanup():
             if now() - job["created"] > JOB_LIFETIME:
                 shutil.rmtree(STORAGE / jid, ignore_errors=True)
                 jobs.pop(jid, None)
+        for vid, until in list(blocked_videos.items()):
+            if until <= now():
+                blocked_videos.pop(vid, None)
         for client, history in list(access.items()):
             while history and history[0] <= now() - 3600:
                 history.popleft()
@@ -128,12 +133,18 @@ def inspect():
     data = request.get_json(silent=True) or {}
     try:
         url, video_id = validate_youtube_url(data.get("url", ""))
+        with lock:
+            blocked = blocked_videos.get(video_id, 0) > now()
+        if blocked:
+            return jsonify({"video": unavailable_preview(url, video_id)})
         try:
             result = inspect_video(url)
             result["downloadable"] = True
             return jsonify({"video": result})
         except Exception as exc:
             if "sign in to confirm" in str(exc).lower() or "not a bot" in str(exc).lower():
+                with lock:
+                    blocked_videos[video_id] = now() + BLOCK_WINDOW
                 return jsonify({"video": unavailable_preview(url, video_id)})
             return error(safe_download_error(exc), 422)
     except ValueError as exc:
@@ -172,6 +183,10 @@ def worker(jid, url, fmt, quality):
             raise ValueError("Completed file exceeds the website size limit.")
         up(status="completed", stage="Ready to save", progress=100, speed=None, eta=None, file=str(result), download_url=f"/api/file/{jid}", error=None)
     except Exception as exc:
+        if "sign in to confirm" in str(exc).lower() or "not a bot" in str(exc).lower():
+            with lock:
+                if jid in jobs:
+                    blocked_videos[jobs[jid]["video_id"]] = now() + BLOCK_WINDOW
         shutil.rmtree(jobdir, ignore_errors=True)
         up(status="failed", stage="Download unavailable", error=safe_download_error(exc))
 
@@ -190,7 +205,11 @@ def download():
         if fmt == "audio-mp3" and not ffmpeg_available():
             return error("MP3 conversion is unavailable on this host.")
         with lock:
+            if blocked_videos.get(vid, 0) > now():
+                return error("YouTube verification is blocking this video on our server. Please use an official or authorised download option.", 422)
             client = client_id()
+            if any(job.get("video_id") == vid and job.get("client_id") == client and job["status"] in ("queued", "downloading", "processing") for job in jobs.values()):
+                return error("This video is already in your active download queue.", 409)
             history = access[client]
             if len(history) >= MAX_HOURLY:
                 return error("Hourly download limit reached. Try again later.", 429)
@@ -198,7 +217,7 @@ def download():
                 return error("Server is busy. Try again shortly.", 429)
             history.append(now())
             jid = uuid.uuid4().hex
-            job = {"id": jid, "title": str(data.get("title") or ("YouTube video " + vid))[:180],
+            job = {"id": jid, "video_id": vid, "client_id": client, "title": str(data.get("title") or ("YouTube video " + vid))[:180],
                    "thumbnail": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
                    "format": fmt, "quality": quality, "status": "queued", "stage": "Queued", "progress": 0,
                    "speed": None, "eta": None, "error": None, "created": now(), "created_at": int(now()),

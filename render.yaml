@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: frame-web-video-studio
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    repo: https://github.com/x25237489-cpu/youtube-video-downloader
+    branch: main
+    healthCheckPath: /health
+    autoDeployTrigger: off

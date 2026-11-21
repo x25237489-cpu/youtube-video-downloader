@@ -48,9 +48,7 @@ def cleanup():
     with lock:
         for jid, job in list(jobs.items()):
             if now() - job["created"] > JOB_LIFETIME:
-                fp = job.get("file")
-                if fp:
-                    Path(fp).unlink(missing_ok=True)
+                shutil.rmtree(STORAGE / jid, ignore_errors=True)
                 jobs.pop(jid, None)
         for client, history in list(access.items()):
             while history and history[0] <= now() - 3600:

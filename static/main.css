@@ -3,3 +3,8 @@
 .preview.is-blocked{border-color:#7c5941;background:#221b1d}
 .restriction-note{margin:10px 0 8px!important;color:#ffd3a3!important;font-size:11px!important;line-height:1.55!important}
 .video-open-link{display:inline-flex;font-size:11px;font-weight:800;color:#c8f3a3;text-decoration:underline;text-underline-offset:3px}
+
+.queue-actions{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.clear-btn{color:#f0aca6;border:1px solid #714446;border-radius:8px;padding:8px 11px;background:#38292b}
+.clear-btn:hover{background:#4b3033}
+@media(max-width:520px){.queue-actions{gap:8px}.queue-actions .text-button{font-size:10px}.recent-head{align-items:center}}

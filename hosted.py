@@ -61,6 +61,14 @@ def redact(job):
     return {key: job.get(key) for key in ("id", "title", "status", "stage", "format", "quality", "progress", "speed", "eta", "error", "thumbnail", "download_url", "created_at")}
 
 
+def safe_download_error(exc):
+    message = str(exc).splitlines()[0][:240]
+    lower = message.lower()
+    if "sign in to confirm" in lower or "not a bot" in lower:
+        return "YouTube requires verification for this cloud server. This video cannot be retrieved here. Do not upload browser cookies or login details. For your own videos, use YouTube Studio or an authorised download option."
+    return message
+
+
 def error(message, code=400):
     return jsonify({"error": message}), code
 
@@ -100,7 +108,7 @@ def inspect():
         result = inspect_video(url)
         return jsonify({"video": result})
     except Exception as exc:
-        return error(str(exc).splitlines()[0][:250], 422)
+        return error(safe_download_error(exc), 422)
 
 
 def worker(jid, url, fmt, quality):
@@ -136,7 +144,7 @@ def worker(jid, url, fmt, quality):
         up(status="completed", stage="Ready to save", progress=100, speed=None, eta=None, file=str(result), download_url=f"/api/file/{jid}", error=None)
     except Exception as exc:
         shutil.rmtree(jobdir, ignore_errors=True)
-        up(status="failed", stage="Download failed", error=str(exc).splitlines()[0][:240])
+        up(status="failed", stage="Download unavailable", error=safe_download_error(exc))
 
 
 @server.post("/api/download")

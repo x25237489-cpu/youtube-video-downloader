@@ -11,6 +11,8 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import urlencode
+from urllib.request import urlopen, Request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -100,15 +102,42 @@ def config():
     return jsonify({"hosted": True, "yt_dlp": True, "ffmpeg": ffmpeg_available(), "folder": "Your browser's Downloads folder", "max_file_mb": 200})
 
 
+def unavailable_preview(video_url, video_id):
+    # Official oEmbed offers public title/channel metadata without downloading media.
+    # Video details are optional: a blocked oEmbed request must not imply downloadability.
+    title, channel = "YouTube video", "YouTube"
+    try:
+        api_url = "https://www.youtube.com/oembed?" + urlencode({"url": video_url, "format": "json"})
+        req = Request(api_url, headers={"User-Agent": "FrameVideoStudio/1.0"})
+        with urlopen(req, timeout=4) as response:
+            meta = __import__("json").loads(response.read(16384))
+            title = str(meta.get("title") or title)[:250]
+            channel = str(meta.get("author_name") or channel)[:140]
+    except Exception:
+        pass
+    return {
+        "id": video_id, "url": video_url, "title": title, "channel": channel,
+        "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        "duration": None, "available_heights": [],
+        "downloadable": False, "restriction": "YouTube requires verification of this cloud server. Frame cannot retrieve the file from here."
+    }
+
+
 @server.post("/api/inspect")
 def inspect():
     data = request.get_json(silent=True) or {}
     try:
-        url, _ = validate_youtube_url(data.get("url", ""))
-        result = inspect_video(url)
-        return jsonify({"video": result})
-    except Exception as exc:
-        return error(safe_download_error(exc), 422)
+        url, video_id = validate_youtube_url(data.get("url", ""))
+        try:
+            result = inspect_video(url)
+            result["downloadable"] = True
+            return jsonify({"video": result})
+        except Exception as exc:
+            if "sign in to confirm" in str(exc).lower() or "not a bot" in str(exc).lower():
+                return jsonify({"video": unavailable_preview(url, video_id)})
+            return error(safe_download_error(exc), 422)
+    except ValueError as exc:
+        return error(str(exc), 422)
 
 
 def worker(jid, url, fmt, quality):
